@@ -386,21 +386,35 @@ std::string classicRebirthName(const std::vector<uint8_t>& rgba) {
 
 // The top-left `rw` x `rh` of a pack picture as its own WebP, through ffmpeg.
 // `lossless` for a mask, whose cut-out edges a lossy encode would soften.
+// The picture is decoded here and handed to ffmpeg as raw RGBA: some ffmpeg
+// builds' own WebP decoder rejects lossless pack files that decode fine.
+std::vector<std::string> rawRgbaInput(const std::string& raw, int w, int h) {
+    return {"-f", "rawvideo", "-pix_fmt", "rgba",
+            "-s", std::to_string(w) + "x" + std::to_string(h), "-i", raw};
+}
+
 bool cropWebp(const std::string& ffmpeg, const std::string& in, int rw, int rh,
               const std::string& tmp, std::vector<uint8_t>* out, bool lossless = false) {
+    std::vector<uint8_t> file, rgba;
+    int pw = 0, ph = 0;
+    const std::string raw = tmp + ".rgba";
+    if (!readFile(in, &file) || !decodeWebp(file, &rgba, &pw, &ph) || !writeFile(raw, rgba))
+        return false;
     const std::string crop = "crop=" + std::to_string(rw) + ":" + std::to_string(rh) + ":0:0";
-    std::vector<std::string> args = {"-hide_banner", "-loglevel", "error", "-y", "-i", in,
-                                     "-vf", crop, "-c:v", "libwebp"};
+    std::vector<std::string> args = {"-hide_banner", "-loglevel", "error", "-y"};
+    const auto input = rawRgbaInput(raw, pw, ph);
+    args.insert(args.end(), input.begin(), input.end());
+    args.insert(args.end(), {"-frames:v", "1", "-vf", crop, "-c:v", "libwebp"});
     if (lossless) args.insert(args.end(), {"-lossless", "1"});
     else args.insert(args.end(), {"-quality", "92"});
     args.insert(args.end(), {"-compression_level", "6", tmp});
     int code = -1;
     std::string so, se, err;
-    if (!ChildProcess::run(ffmpeg, args, false, &code, &so, &se, &err) ||
-        code != 0)
-        return false;
-    const bool ok = readFile(tmp, out) && !out->empty();
+    const bool ran = ChildProcess::run(ffmpeg, args, false, &code, &so, &se, &err) && code == 0;
     std::error_code ec;
+    std::filesystem::remove(raw, ec);
+    if (!ran) return false;
+    const bool ok = readFile(tmp, out) && !out->empty();
     std::filesystem::remove(tmp, ec);
     return ok;
 }
@@ -439,7 +453,9 @@ bool composeSkin(const std::string& ffmpeg, const std::string& pal0, const std::
         return false;
     }
     const int tw = pw * w / 256, th = ph * h / 256;   // the texture in the picture
-    std::vector<std::string> args = {"-hide_banner", "-loglevel", "error", "-y", "-i", pal0};
+    const std::string raw0 = tmp + ".0.rgba", raw1 = tmp + ".1.rgba";
+    std::error_code ec;
+    std::vector<std::string> args = {"-hide_banner", "-loglevel", "error", "-y"};
     std::string filter;
     if (pal1.empty()) {
         if (w == 256 && h == 256) {
@@ -447,6 +463,12 @@ bool composeSkin(const std::string& ffmpeg, const std::string& pal0, const std::
             return true;
         }
         filter = "crop=" + std::to_string(tw) + ":" + std::to_string(th) + ":0:0";
+        if (!writeFile(raw0, rgba)) {
+            *why = "cannot write " + raw0;
+            return false;
+        }
+        const auto in0 = rawRgbaInput(raw0, pw, ph);
+        args.insert(args.end(), in0.begin(), in0.end());
     } else {
         int qw = 0, qh = 0;
         std::vector<uint8_t> file1, rgba1;
@@ -454,7 +476,13 @@ bool composeSkin(const std::string& ffmpeg, const std::string& pal0, const std::
             *why = pal1 + " does not decode";
             return false;
         }
-        args.insert(args.end(), {"-i", pal1});
+        if (!writeFile(raw0, rgba) || !writeFile(raw1, rgba1)) {
+            *why = "cannot write " + raw0;
+            return false;
+        }
+        const auto in0 = rawRgbaInput(raw0, pw, ph), in1 = rawRgbaInput(raw1, qw, qh);
+        args.insert(args.end(), in0.begin(), in0.end());
+        args.insert(args.end(), in1.begin(), in1.end());
         const std::string half = std::to_string(tw / 2), hh = std::to_string(th);
         // The second picture is brought to the first one's size, in case the
         // two rows came from packs of different resolutions.
@@ -462,16 +490,19 @@ bool composeSkin(const std::string& ffmpeg, const std::string& pal0, const std::
                  ":" + std::to_string(ph) + ":flags=lanczos,crop=" + std::to_string(tw - tw / 2) +
                  ":" + hh + ":" + half + ":0[r];[l][r]hstack=inputs=2";
     }
-    args.insert(args.end(), {pal1.empty() ? "-vf" : "-filter_complex", filter, "-pix_fmt", "bgra",
-                             "-c:v", "libwebp", "-lossless", "1", "-compression_level", "4", tmp});
+    args.insert(args.end(), {"-frames:v", "1", pal1.empty() ? "-vf" : "-filter_complex", filter,
+                             "-pix_fmt", "bgra", "-c:v", "libwebp", "-lossless", "1",
+                             "-compression_level", "4", tmp});
     int code = -1;
     std::string so, se, err;
-    if (!ChildProcess::run(ffmpeg, args, false, &code, &so, &se, &err) || code != 0) {
+    const bool ran = ChildProcess::run(ffmpeg, args, false, &code, &so, &se, &err) && code == 0;
+    std::filesystem::remove(raw0, ec);
+    std::filesystem::remove(raw1, ec);
+    if (!ran) {
         *why = "ffmpeg could not build it (it needs libwebp)" + (se.empty() ? "" : ": " + se);
         return false;
     }
     const bool ok = readFile(tmp, out) && !out->empty();
-    std::error_code ec;
     std::filesystem::remove(tmp, ec);
     if (!ok) *why = "ffmpeg wrote nothing";
     return ok;
