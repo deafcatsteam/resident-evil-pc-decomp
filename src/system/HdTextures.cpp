@@ -24,6 +24,33 @@
 #include <unordered_set>
 #include <vector>
 
+#ifdef __EMSCRIPTEN__
+#include <emscripten.h>
+
+// The web build's decoders are Web Workers (src/platform/web/hd.js).
+// Hand `name` (file `path`) over; FALSE when the workers are unusable.
+EM_JS(int, web_hd_decode, (const char* name, const char* path), {
+    return Module.re1Hd.decode(UTF8ToString(name), UTF8ToString(path)) ? 1 : 0;
+});
+
+// 1 = pixels ready (*w, *h set), -1 = failed, -2 = decode it here, 0 = not yet.
+EM_JS(int, web_hd_state, (const char* name, int* w, int* h), {
+    var s = Module.re1Hd.state(UTF8ToString(name));
+    if (s[0] === 1) { HEAP32[w >> 2] = s[1]; HEAP32[h >> 2] = s[2]; }
+    return s[0];
+});
+
+// Copy the ready pixels of `name` to dst and forget them.
+EM_JS(void, web_hd_copy, (const char* name, unsigned char* dst), {
+    Module.re1Hd.copy(UTF8ToString(name), dst);
+});
+
+// Drop every answer still on its way (a new room).
+EM_JS(void, web_hd_cancel, (void), {
+    Module.re1Hd.cancel();
+});
+#endif
+
 namespace {
 
 const char* const kFolder = "HD";
@@ -196,9 +223,16 @@ void StartWorkers(Shared& sh)
 {
 #ifdef __EMSCRIPTEN__
     // The web build has no threads (no SharedArrayBuffer, so no COOP/COEP
-    // headers to ask of the server): a queued job stays queued until
-    // HdTextures_Poll decodes it on the game thread (RunQueued).
-    (void)sh;
+    // headers to ask of the server): the jobs go to web/hd.js's Web Workers,
+    // and HdTextures_Poll collects the answers (Harvest). If the workers
+    // cannot run, a job stays queued and the poll decodes it on the game
+    // thread (RunQueued).
+    while (!sh.queue.empty()) {
+        const Job& job = sh.queue.front();
+        if (!web_hd_decode(job.name.c_str(), job.path.c_str())) return;
+        sh.running.insert(job.name);
+        sh.queue.pop_front();
+    }
 #else
     if (sh.started) return;
     sh.started = true;
@@ -207,6 +241,36 @@ void StartWorkers(Shared& sh)
 }
 
 #ifdef __EMSCRIPTEN__
+// Web: take whatever the workers finished into the cache, as the native
+// workers do on their own. Caller holds the mutex.
+void Harvest(Shared& sh)
+{
+    if (sh.running.empty()) return;
+    std::vector<std::string> names(sh.running.begin(), sh.running.end());
+    for (size_t i = 0; i < names.size(); ++i) {
+        const std::string& name = names[i];
+        int w = 0, h = 0;
+        const int state = web_hd_state(name.c_str(), &w, &h);
+        if (state == 0) continue;
+        sh.running.erase(name);
+        if (state == 1) {
+            std::shared_ptr<std::vector<unsigned char> > pixels(
+                new std::vector<unsigned char>((size_t)w * h * 4));
+            web_hd_copy(name.c_str(), pixels->data());
+            CacheInsert(sh, name, pixels, w, h);
+        } else if (state == -1) {
+            sh.failed.insert(name);
+        } else {
+            std::unordered_map<std::string, std::string>::iterator p = sh.paths.find(name);
+            if (p == sh.paths.end()) { sh.failed.insert(name); continue; }
+            Job job;
+            job.name = name;
+            job.path = p->second;
+            sh.queue.push_front(job);
+        }
+    }
+}
+
 // Web: decode the queued job `name` now, on the game thread. The lock is held
 // throughout, which costs nothing single-threaded. Returns whether it was queued.
 bool RunQueued(Shared& sh, const std::string& name)
@@ -475,6 +539,12 @@ void HdTextures_PrefetchCancel(void)
     Shared& sh = S();
     std::lock_guard<std::mutex> lock(sh.mutex);
     sh.queue.clear();
+#ifdef __EMSCRIPTEN__
+    // The workers' answers for the room left are not wanted any more; a poll
+    // for one of them queues it again (HdTextures_Poll).
+    sh.running.clear();
+    web_hd_cancel();
+#endif
 }
 
 // ---------------------------------------------------------------------------
@@ -1012,6 +1082,9 @@ int HdTextures_Poll(const std::string& token, HdPixels* out, int* outWidth, int*
 {
     Shared& sh = S();
     std::lock_guard<std::mutex> lock(sh.mutex);
+#ifdef __EMSCRIPTEN__
+    Harvest(sh);
+#endif
     if (CacheGet(sh, token, out, outWidth, outHeight)) return 1;
     if (sh.failed.count(token)) return -1;
     if (sh.running.count(token)) return 0;

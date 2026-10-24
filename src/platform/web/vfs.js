@@ -14,11 +14,21 @@
 //   {"version": 1, "files": [["USA/Data/fontus.tim", 18452, "3f9a0c1d"], ...]}
 // The third field is a short version tag appended as ?v= so every URL is
 // immutable and the server can let the browser cache it for good.
+//
+// Stage warm-up: the first file the game reads from a Stage<n>/ folder (its
+// rooms and backgrounds; never under HD/) puts the rest of that folder into
+// the Cache API in the background - two requests at a time, and only while
+// the game itself is waiting for nothing - so the next doors open without a
+// round trip to the server. Nothing is kept in memory.
 
 var re1Vfs = {
     root: '/re1',
     pending: 0,
     cache: null,
+    dirs: {},           // folder -> [url, ...] (manifest order)
+    warmed: {},         // folders already queued for warm-up
+    warmQueue: [],
+    warmActive: 0,
 
     node: function (path) {
         try {
@@ -73,6 +83,7 @@ var re1Vfs = {
                 return -1;
             }
             HEAPU8.set(bytes, dst);   // HEAPU8 is re-read: the heap may have grown meanwhile
+            re1Vfs.warm(path);
             return size;
         } catch (e) {
             err('[vfs] ' + path + ': ' + e);
@@ -80,7 +91,36 @@ var re1Vfs = {
         } finally {
             re1Vfs.pending--;
             if (Module.re1OnFetch) Module.re1OnFetch(re1Vfs.pending);
+            if (re1Vfs.pending === 0) re1Vfs.pump();
         }
+    },
+
+    warm: function (path) {
+        var dir = path.substring(0, path.lastIndexOf('/'));
+        if (re1Vfs.warmed[dir] || !re1Vfs.dirs[dir]) return;
+        if (!/\/stage\d+$/i.test(dir) || dir.toLowerCase().indexOf(re1Vfs.root + '/hd/') === 0) return;
+        re1Vfs.warmed[dir] = true;
+        Array.prototype.push.apply(re1Vfs.warmQueue, re1Vfs.dirs[dir]);
+        re1Vfs.pump();
+    },
+
+    pump: function () {
+        while (re1Vfs.warmActive < 2 && re1Vfs.pending === 0 && re1Vfs.warmQueue.length) {
+            var url = re1Vfs.warmQueue.shift();
+            re1Vfs.warmActive++;
+            re1Vfs.warmOne(url).catch(function () { /* the game fetches it itself if needed */ })
+                .then(function () {
+                    re1Vfs.warmActive--;
+                    re1Vfs.pump();
+                });
+        }
+    },
+
+    warmOne: async function (url) {
+        var cache = await re1Vfs.openCache();
+        if (!cache || await cache.match(url)) return;
+        var response = await fetch(url, { credentials: 'same-origin' });
+        if (response.ok) await cache.put(url, response);
     },
 
     mount: function (manifest, base) {
@@ -96,6 +136,7 @@ var re1Vfs = {
             FS.writeFile(full, '');
             var url = base + rel.split('/').map(encodeURIComponent).join('/') + (tag ? '?v=' + tag : '');
             FS.lookupPath(full).node.re1Remote = { size: size, url: url };
+            (re1Vfs.dirs[dir] = re1Vfs.dirs[dir] || []).push(url);
         }
         return files.length;
     },

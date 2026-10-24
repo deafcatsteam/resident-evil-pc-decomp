@@ -197,13 +197,31 @@ if(EMSCRIPTEN)
         "--pre-js=${CMAKE_SOURCE_DIR}/src/platform/web/vfs.js"
         "--pre-js=${CMAKE_SOURCE_DIR}/src/platform/web/persist.js"
         "--pre-js=${CMAKE_SOURCE_DIR}/src/platform/web/video.js"
+        "--pre-js=${CMAKE_SOURCE_DIR}/src/platform/web/hd.js"
         "--shell-file=${CMAKE_SOURCE_DIR}/src/platform/web/shell.html")
     set_property(TARGET residentevil APPEND PROPERTY LINK_DEPENDS
         ${CMAKE_SOURCE_DIR}/src/platform/web/runtime.js
         ${CMAKE_SOURCE_DIR}/src/platform/web/vfs.js
         ${CMAKE_SOURCE_DIR}/src/platform/web/persist.js
         ${CMAKE_SOURCE_DIR}/src/platform/web/video.js
+        ${CMAKE_SOURCE_DIR}/src/platform/web/hd.js
         ${CMAKE_SOURCE_DIR}/src/platform/web/shell.html)
+
+    # The HD texture decoder for the page's Web Workers (web/hd.js): the
+    # game's own WebP decoder as a module of its own, re1_hd_worker.js/.wasm
+    # beside the game.
+    add_executable(re1_hd_worker
+        src/platform/web/hd_worker.cpp
+        src/system/WebpImage.cpp)
+    target_compile_options(re1_hd_worker PRIVATE -w)
+    target_link_options(re1_hd_worker PRIVATE
+        -sENVIRONMENT=worker
+        -sALLOW_MEMORY_GROWTH -sMAXIMUM_MEMORY=1GB
+        -sEXPORTED_FUNCTIONS=_main,_malloc,_free,_re1_hd_decode
+        "--post-js=${CMAKE_SOURCE_DIR}/src/platform/web/hd_worker_post.js")
+    set_property(TARGET re1_hd_worker APPEND PROPERTY LINK_DEPENDS
+        ${CMAKE_SOURCE_DIR}/src/platform/web/hd_worker_post.js)
+    add_dependencies(residentevil re1_hd_worker)
     return()
 endif()
 

@@ -1,0 +1,45 @@
+# Caddyfile for the web build (docs/WEB_PORT.md, "Déploiement").
+#
+# Needs Caddy with the WebDAV module:
+#     caddy add-package github.com/mholt/caddy-webdav
+# (or xcaddy build --with github.com/mholt/caddy-webdav).
+#
+# /srv/re1/www/          index.html, residentevil.js/.wasm, re1_hd_worker.js/.wasm
+# /srv/re1/www/data/     USA/ DC/ HD/ ..., manifest.json, config.ini (optional preset)
+# /srv/re1/saves/<user>/ each player's saves and config.ini (WebDAV) - create
+#                        one folder per basic_auth user, owned by Caddy's user
+
+{
+	order webdav before file_server
+}
+
+re1.example.org {
+	# Private: every request needs a login. One line per player; the hash
+	# comes from `caddy hash-password`. The save folder below is named after
+	# this login, so the auth must stay in front of /saves.
+	basic_auth {
+		player $2a$14$REPLACE_WITH_THE_OUTPUT_OF_caddy_hash-password
+	}
+
+	root * /srv/re1/www
+	encode zstd gzip
+
+	# Data files are requested as name?v=<tag> (tools/web/build_manifest.py):
+	# such a URL never changes meaning, so the browser may keep it for good.
+	# The manifest, the page and the engine are revalidated every time.
+	@versioned query v=*
+	@unversioned not query v=*
+	header @versioned Cache-Control "private, max-age=31536000, immutable"
+	header @unversioned Cache-Control "no-cache"
+
+	# The player's saves (src/platform/web/persist.js). {http.auth.user.id} is
+	# the basic_auth login, resolved on every request.
+	route /saves/* {
+		webdav {
+			root /srv/re1/saves/{http.auth.user.id}
+			prefix /saves
+		}
+	}
+
+	file_server
+}

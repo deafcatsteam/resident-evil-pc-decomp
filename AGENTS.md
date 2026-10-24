@@ -27,9 +27,11 @@ original's quirks are preserved rather than cleaned up.
 - **Web port: in progress** (`web-port` branch). The Linux platform layer
   compiled with Emscripten (`if(EMSCRIPTEN)` in `CMakeLists.txt`) plus
   `src/platform/web/` (fiber scheduler, lazy data tree behind a wrapped
-  `fopen`, `<video>` FMV, saves kept over WebDAV + IndexedDB, page shell).
-  No threads: anything that starts a `std::thread` needs
-  an `__EMSCRIPTEN__` path. See `docs/WEB_PORT.md`.
+  `fopen`, `<video>` FMV, saves kept over WebDAV + IndexedDB, page shell,
+  HD WebP decoding in two Web Workers - `re1_hd_worker`, its own CMake
+  target). No threads: anything that starts a `std::thread` needs an
+  `__EMSCRIPTEN__` path. Deployment: `tools/web/deploy.sh` and
+  `deploy/Caddyfile.example` (Caddy + caddy-webdav). See `docs/WEB_PORT.md`.
 
 - **Game OPTIONS menu (port-added, no original address).** With the
   title font present, every mode's title menu is NEW GAME / LOAD GAME / EXTRA
