@@ -21,6 +21,12 @@
 // costs nothing, and the browser's Cache API, not the wasm heap, keeps what
 // was already downloaded. Any write-mode open turns the placeholder into an
 // ordinary MEMFS file.
+//
+// The player's own files (config.ini, the save folder - web/persist.js) are
+// written through a second cookie stream around the real one, whose close
+// hands the finished file to persist.js: IndexedDB at once, the server's
+// WebDAV folder in the background. Every write in the game goes through fopen,
+// so nothing has to poll for changes.
 #ifndef _GNU_SOURCE
 #define _GNU_SOURCE   // fopencookie
 #endif
@@ -39,6 +45,16 @@ EM_JS(int, web_vfs_remote_size, (const char* path), {
 // A write-mode open: the file's content is the game's from now on.
 EM_JS(void, web_vfs_forget, (const char* path), {
     if (Module.re1Vfs) Module.re1Vfs.forget(UTF8ToString(path));
+});
+
+// TRUE when `path` is one of the files persist.js keeps.
+EM_JS(int, web_persist_wants, (const char* path), {
+    return (Module.re1Persist && Module.re1Persist.keyFor(UTF8ToString(path)) !== null) ? 1 : 0;
+});
+
+// A kept file was closed after writing: store it.
+EM_JS(void, web_persist_saved, (const char* path), {
+    if (Module.re1Persist) Module.re1Persist.saved(UTF8ToString(path));
 });
 
 // Fetch `path` into dst[0..size). Returns the byte count, or -1.
@@ -94,6 +110,43 @@ int remote_close(void* cookie)
     return 0;
 }
 
+// A write-mode stream on a kept file: everything goes to the real stream, and
+// closing it reports the file to persist.js.
+struct KeptFile {
+    FILE* real;
+    char path[1];          // the rest of the allocation
+};
+
+ssize_t kept_read(void* cookie, char* buf, size_t len)
+{
+    KeptFile* f = (KeptFile*)cookie;
+    size_t n = fread(buf, 1, len, f->real);
+    return (n == 0 && ferror(f->real)) ? -1 : (ssize_t)n;
+}
+
+ssize_t kept_write(void* cookie, const char* buf, size_t len)
+{
+    KeptFile* f = (KeptFile*)cookie;
+    return (ssize_t)fwrite(buf, 1, len, f->real);
+}
+
+int kept_seek(void* cookie, off_t* offset, int whence)
+{
+    KeptFile* f = (KeptFile*)cookie;
+    if (fseeko(f->real, *offset, whence) != 0) return -1;
+    *offset = ftello(f->real);
+    return 0;
+}
+
+int kept_close(void* cookie)
+{
+    KeptFile* f = (KeptFile*)cookie;
+    int r = fclose(f->real);
+    if (r == 0) web_persist_saved(f->path);
+    free(f);
+    return r;
+}
+
 }  // namespace
 
 extern "C" FILE* __real_fopen(const char* path, const char* mode);
@@ -103,7 +156,18 @@ extern "C" FILE* __wrap_fopen(const char* path, const char* mode)
     if (path == NULL || mode == NULL) return __real_fopen(path, mode);
     if (mode[0] != 'r' || strchr(mode, '+') != NULL) {
         web_vfs_forget(path);
-        return __real_fopen(path, mode);
+        FILE* real = __real_fopen(path, mode);
+        if (real == NULL || !web_persist_wants(path)) return real;
+
+        size_t len = strlen(path);
+        KeptFile* f = (KeptFile*)malloc(sizeof(KeptFile) + len);
+        if (f == NULL) { fclose(real); return NULL; }
+        f->real = real;
+        memcpy(f->path, path, len + 1);
+        cookie_io_functions_t io = { kept_read, kept_write, kept_seek, kept_close };
+        FILE* stream = fopencookie(f, mode, io);
+        if (stream == NULL) { fclose(real); free(f); }
+        return stream;
     }
     int size = web_vfs_remote_size(path);
     if (size < 0) return __real_fopen(path, mode);

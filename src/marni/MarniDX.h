@@ -151,6 +151,12 @@ public:
     // a caller that kept a handle can tell it still names the same texture.
     unsigned int TextureSerial(MarniHandle tex) const;
 
+#ifdef __EMSCRIPTEN__
+    // Web only (src/platform/web/video.cpp): the GL texture name behind `tex`,
+    // so a <video> frame can be uploaded straight into it. 0 if invalid.
+    unsigned int GLTextureName(MarniHandle tex) const;
+#endif
+
     // Return the dimensions of a live handle (fills *w/*h). No-op if invalid.
     void GetTextureSize(MarniHandle tex, int* outWidth, int* outHeight) const;
 

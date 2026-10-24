@@ -27,7 +27,8 @@ original's quirks are preserved rather than cleaned up.
 - **Web port: in progress** (`web-port` branch). The Linux platform layer
   compiled with Emscripten (`if(EMSCRIPTEN)` in `CMakeLists.txt`) plus
   `src/platform/web/` (fiber scheduler, lazy data tree behind a wrapped
-  `fopen`, page shell). No threads: anything that starts a `std::thread` needs
+  `fopen`, `<video>` FMV, saves kept over WebDAV + IndexedDB, page shell).
+  No threads: anything that starts a `std::thread` needs
   an `__EMSCRIPTEN__` path. See `docs/WEB_PORT.md`.
 
 - **Game OPTIONS menu (port-added, no original address).** With the

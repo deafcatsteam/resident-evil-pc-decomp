@@ -29,6 +29,9 @@
   #busy { position: fixed; right: 12px; bottom: 10px; color: var(--dim); font-size: 13px;
           opacity: 0; transition: opacity .2s; pointer-events: none; }
   #busy.on { opacity: 1; }
+  #persist { position: fixed; left: 12px; bottom: 10px; color: var(--dim); font-size: 13px;
+             pointer-events: none; }
+  #persist.warn { color: #f0b0a8; }
   #fs { position: fixed; top: 8px; right: 8px; padding: 4px 10px; font-size: 13px; opacity: .35; }
   #fs:hover { opacity: 1; }
 </style>
@@ -37,6 +40,7 @@
 <div id="stage"><canvas id="canvas" tabindex="-1" oncontextmenu="event.preventDefault()"></canvas></div>
 <button id="fs" type="button" title="Plein écran">⛶</button>
 <div id="busy">Chargement…</div>
+<div id="persist"></div>
 <div id="overlay">
   <h1>RESIDENT EVIL</h1>
   <div id="status">Téléchargement du moteur…</div>
@@ -50,6 +54,8 @@
   var play = document.getElementById('play');
   var errorEl = document.getElementById('error');
   var busy = document.getElementById('busy');
+  var persistEl = document.getElementById('persist');
+  var persistTimer = 0;
   var canvas = document.getElementById('canvas');
   var params = new URLSearchParams(location.search);
   var busyTimer = 0;
@@ -65,6 +71,7 @@
   window.Module = {
     canvas: canvas,
     re1DataUrl: params.get('data') || 'data/',
+    re1SaveUrl: params.get('saves') || 'saves/',
     re1Env: params.get('debuglog') === '1' ? { RE1_DEBUGLOG: '1' } : {},
     print: function (t) { console.log(t); },
     printErr: function (t) { console.warn(t); },
@@ -78,6 +85,21 @@
       clearTimeout(busyTimer);
       if (pending > 0) busyTimer = setTimeout(function () { busy.classList.add('on'); }, 250);
       else busy.classList.remove('on');
+    },
+    // Where the saves go (web/persist.js). Said once on the start screen;
+    // during play only a problem stays on screen.
+    re1OnPersist: function (state) {
+      clearTimeout(persistTimer);
+      persistEl.classList.toggle('warn', state !== 'server');
+      if (state === 'server') {
+        persistEl.textContent = overlay.hidden ? 'Sauvegardé sur le serveur' : 'Sauvegardes : serveur';
+        persistTimer = setTimeout(function () { persistEl.textContent = ''; }, 2500);
+      } else if (state === 'local') {
+        persistEl.textContent = 'Sauvegardes : ce navigateur uniquement (pas de WebDAV)';
+        if (overlay.hidden) persistTimer = setTimeout(function () { persistEl.textContent = ''; }, 4000);
+      } else {
+        persistEl.textContent = 'Serveur injoignable : sauvegarde gardée dans ce navigateur';
+      }
     },
     re1OnFatal: function (message) {
       fail('Données du jeu introuvables.\n\n' + message +
@@ -101,6 +123,7 @@
       play.onclick = function () {
         play.disabled = true;
         overlay.hidden = true;
+        if (!persistEl.classList.contains('warn')) persistEl.textContent = '';
         canvas.focus();
         start();
       };
@@ -115,6 +138,11 @@
     }).catch(function () {});
     canvas.focus();
   };
+  // A save still on its way to the server: let the player wait for it.
+  window.addEventListener('beforeunload', function (e) {
+    var p = window.Module.re1Persist;
+    if (p && p.pending.length) { e.preventDefault(); e.returnValue = ''; }
+  });
   window.addEventListener('error', function (e) { if (overlay.hidden) fail(String(e.message)); });
 })();
 </script>

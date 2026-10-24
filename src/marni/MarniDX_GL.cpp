@@ -621,6 +621,15 @@ unsigned int MarniDX::TextureSerial(MarniHandle tex) const
     return p->slots[tex].serial;
 }
 
+#ifdef __EMSCRIPTEN__
+unsigned int MarniDX::GLTextureName(MarniHandle tex) const
+{
+    const Impl* p = m_pImpl;
+    if (p == nullptr || tex == MARNI_NULL_HANDLE || tex >= MARNI_MAX_TEXTURES) return 0;
+    return p->slots[tex].tex;
+}
+#endif
+
 void MarniDX::GetTextureSize(MarniHandle tex, int* outWidth, int* outHeight) const
 {
     Impl* p = m_pImpl;

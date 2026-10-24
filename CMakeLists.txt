@@ -190,14 +190,19 @@ if(EMSCRIPTEN)
         -sSTACK_SIZE=1MB
         -sFORCE_FILESYSTEM
         # The data tree is fetched on demand: fopen is wrapped (web/vfs.cpp)
-        # and the manifest is mounted before main (web/vfs.js).
+        # and the manifest is mounted before main (web/vfs.js); the saves and
+        # config.ini are restored before main and kept (web/persist.js).
         -Wl,--wrap=fopen
         "--pre-js=${CMAKE_SOURCE_DIR}/src/platform/web/runtime.js"
         "--pre-js=${CMAKE_SOURCE_DIR}/src/platform/web/vfs.js"
+        "--pre-js=${CMAKE_SOURCE_DIR}/src/platform/web/persist.js"
+        "--pre-js=${CMAKE_SOURCE_DIR}/src/platform/web/video.js"
         "--shell-file=${CMAKE_SOURCE_DIR}/src/platform/web/shell.html")
     set_property(TARGET residentevil APPEND PROPERTY LINK_DEPENDS
         ${CMAKE_SOURCE_DIR}/src/platform/web/runtime.js
         ${CMAKE_SOURCE_DIR}/src/platform/web/vfs.js
+        ${CMAKE_SOURCE_DIR}/src/platform/web/persist.js
+        ${CMAKE_SOURCE_DIR}/src/platform/web/video.js
         ${CMAKE_SOURCE_DIR}/src/platform/web/shell.html)
     return()
 endif()

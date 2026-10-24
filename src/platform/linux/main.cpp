@@ -392,10 +392,16 @@ int main(int argc, char** argv)
 #ifdef __EMSCRIPTEN__
     // A page has no process to re-execute: restarting is reloading it, and
     // quitting leaves the page on the shell's "game closed" screen.
+    // Either way the settings just written may still be on their way to the
+    // server (web/persist.js): wait for them first.
     if (s_restartRequested) {
-        EM_ASM({ location.reload(); });
+        EM_ASM({ Module.re1Persist.flush().then(function () { location.reload(); }); });
     } else {
-        EM_ASM({ if (Module.onGameQuit) Module.onGameQuit(); });
+        EM_ASM({
+            Module.re1Persist.flush().then(function () {
+                if (Module.onGameQuit) Module.onGameQuit();
+            });
+        });
     }
     return 0;
 #else
