@@ -27,8 +27,14 @@ static inline FILE* dbg_log_file(void)
         logToFile = plat_env_get("RE1_DEBUGLOG", v, 4) ? 1 : 0;
     }
     if (!logToFile) return NULL;
+#ifdef __EMSCRIPTEN__
+    // A page has no log file anyone can open: the trace goes to the console
+    // (the shell sets RE1_DEBUGLOG for ?debuglog=1).
+    return stderr;
+#else
     static FILE* f = fopen("re1_debug.log", "a");
     return f;
+#endif
 }
 
 // Safe replacement for raw debug-output calls. Raw use is BANNED in task code:

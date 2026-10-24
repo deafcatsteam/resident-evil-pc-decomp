@@ -1,0 +1,47 @@
+name: Web build
+
+# Builds the Emscripten target (docs/WEB_PORT.md) and keeps it as a workflow
+# artifact: residentevil.html/.js/.wasm plus the tools that serve it. No game
+# data is involved - the page fetches it from the server at run time.
+
+on:
+  push:
+    branches: [web-port]
+  workflow_dispatch:
+
+env:
+  EMSDK_VERSION: "6.0.13"
+
+jobs:
+  build-web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check platform boundary
+        run: python3 tests/check_platform_boundary.py
+
+      - name: Install Emscripten
+        run: |
+          git clone --depth 1 https://github.com/emscripten-core/emsdk.git "$RUNNER_TEMP/emsdk"
+          "$RUNNER_TEMP/emsdk/emsdk" install "$EMSDK_VERSION"
+          "$RUNNER_TEMP/emsdk/emsdk" activate "$EMSDK_VERSION"
+
+      - name: Build
+        run: |
+          source "$RUNNER_TEMP/emsdk/emsdk_env.sh"
+          emcmake cmake -S . -B build/web -DCMAKE_BUILD_TYPE=Release
+          cmake --build build/web -j"$(nproc)"
+
+      - name: Stage
+        run: |
+          mkdir -p dist/re1-web/www dist/re1-web/tools
+          cp build/web/residentevil.html dist/re1-web/www/index.html
+          cp build/web/residentevil.js build/web/residentevil.wasm dist/re1-web/www/
+          cp tools/web/*.py dist/re1-web/tools/
+          cp docs/WEB_PORT.md dist/re1-web/
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: re1-web-${{ github.sha }}
+          path: dist/re1-web

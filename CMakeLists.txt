@@ -188,7 +188,17 @@ if(EMSCRIPTEN)
         -sEMULATE_FUNCTION_POINTER_CASTS
         -sALLOW_MEMORY_GROWTH -sINITIAL_MEMORY=128MB -sMAXIMUM_MEMORY=4GB
         -sSTACK_SIZE=1MB
-        -sFORCE_FILESYSTEM)
+        -sFORCE_FILESYSTEM
+        # The data tree is fetched on demand: fopen is wrapped (web/vfs.cpp)
+        # and the manifest is mounted before main (web/vfs.js).
+        -Wl,--wrap=fopen
+        "--pre-js=${CMAKE_SOURCE_DIR}/src/platform/web/runtime.js"
+        "--pre-js=${CMAKE_SOURCE_DIR}/src/platform/web/vfs.js"
+        "--shell-file=${CMAKE_SOURCE_DIR}/src/platform/web/shell.html")
+    set_property(TARGET residentevil APPEND PROPERTY LINK_DEPENDS
+        ${CMAKE_SOURCE_DIR}/src/platform/web/runtime.js
+        ${CMAKE_SOURCE_DIR}/src/platform/web/vfs.js
+        ${CMAKE_SOURCE_DIR}/src/platform/web/shell.html)
     return()
 endif()
 

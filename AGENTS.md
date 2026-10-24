@@ -24,6 +24,11 @@ original's quirks are preserved rather than cleaned up.
   translation unit and swaps the platform layer plus the renderer backend
   (SDL2 + OpenGL 3.3 core, ffmpeg for FMV). Verified running on Ubuntu and
   CachyOS, keyboard and gamepad. See `docs/LINUX_PORT.md`.
+- **Web port: in progress** (`web-port` branch). The Linux platform layer
+  compiled with Emscripten (`if(EMSCRIPTEN)` in `CMakeLists.txt`) plus
+  `src/platform/web/` (fiber scheduler, lazy data tree behind a wrapped
+  `fopen`, page shell). No threads: anything that starts a `std::thread` needs
+  an `__EMSCRIPTEN__` path. See `docs/WEB_PORT.md`.
 
 - **Game OPTIONS menu (port-added, no original address).** With the
   title font present, every mode's title menu is NEW GAME / LOAD GAME / EXTRA

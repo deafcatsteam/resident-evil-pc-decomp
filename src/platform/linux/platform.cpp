@@ -20,6 +20,9 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <unistd.h>
+#ifdef __EMSCRIPTEN__
+#include <emscripten/heap.h>   // plat_readable_bytes
+#endif
 
 #include <string>
 #include <unordered_map>
@@ -293,6 +296,11 @@ void* plat_file_read_all(const char* path, size_t* outSize)
 
 size_t plat_readable_bytes(const void* p)
 {
+#ifdef __EMSCRIPTEN__
+    // The wasm heap is one flat region, readable from 0 to its current size.
+    size_t heap = emscripten_get_heap_size();
+    return ((size_t)p < heap) ? heap - (size_t)p : 0;
+#endif
     // Walk /proc/self/maps for the mapping that contains p and report how much
     // of it is readable.
     FILE* f = fopen("/proc/self/maps", "r");

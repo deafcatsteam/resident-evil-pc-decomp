@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Resident Evil</title>
+<style>
+  :root { color-scheme: dark; --fg: #e8e2d6; --dim: #8a8478; --accent: #b0201a; --bg: #000; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg);
+               font: 15px/1.5 system-ui, sans-serif; overflow: hidden; }
+  #stage { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; }
+  /* SDL sets the canvas's pixel size from the game's window; the page only scales it. */
+  #canvas { display: block; outline: none; background: #000;
+            width: min(100vw, calc(100vh * 4 / 3)) !important;
+            height: min(100vh, calc(100vw * 3 / 4)) !important; image-rendering: auto; }
+  #overlay { position: fixed; inset: 0; display: flex; flex-direction: column; align-items: center;
+             justify-content: center; gap: 18px; background: rgba(0, 0, 0, .88); text-align: center;
+             padding: 16px; box-sizing: border-box; }
+  #overlay[hidden] { display: none; }
+  h1 { margin: 0; font-size: clamp(28px, 6vw, 56px); letter-spacing: .12em; color: var(--accent);
+       font-family: Georgia, serif; font-weight: normal; }
+  button { font: inherit; color: var(--fg); background: transparent; border: 1px solid var(--dim);
+           padding: 10px 28px; cursor: pointer; letter-spacing: .08em; }
+  button:hover, button:focus-visible { border-color: var(--fg); outline: none; }
+  button[disabled] { opacity: .4; cursor: default; }
+  #status { color: var(--dim); min-height: 1.5em; }
+  #error { max-width: 640px; color: #f0b0a8; white-space: pre-wrap; }
+  #error[hidden] { display: none; }
+  #busy { position: fixed; right: 12px; bottom: 10px; color: var(--dim); font-size: 13px;
+          opacity: 0; transition: opacity .2s; pointer-events: none; }
+  #busy.on { opacity: 1; }
+  #fs { position: fixed; top: 8px; right: 8px; padding: 4px 10px; font-size: 13px; opacity: .35; }
+  #fs:hover { opacity: 1; }
+</style>
+</head>
+<body>
+<div id="stage"><canvas id="canvas" tabindex="-1" oncontextmenu="event.preventDefault()"></canvas></div>
+<button id="fs" type="button" title="Plein écran">⛶</button>
+<div id="busy">Chargement…</div>
+<div id="overlay">
+  <h1>RESIDENT EVIL</h1>
+  <div id="status">Téléchargement du moteur…</div>
+  <button id="play" type="button" disabled>Cliquer pour jouer</button>
+  <div id="error" hidden></div>
+</div>
+<script>
+(function () {
+  var overlay = document.getElementById('overlay');
+  var statusEl = document.getElementById('status');
+  var play = document.getElementById('play');
+  var errorEl = document.getElementById('error');
+  var busy = document.getElementById('busy');
+  var canvas = document.getElementById('canvas');
+  var params = new URLSearchParams(location.search);
+  var busyTimer = 0;
+
+  function fail(message) {
+    overlay.hidden = false;
+    play.hidden = true;
+    statusEl.textContent = '';
+    errorEl.hidden = false;
+    errorEl.textContent = message;
+  }
+
+  window.Module = {
+    canvas: canvas,
+    re1DataUrl: params.get('data') || 'data/',
+    re1Env: params.get('debuglog') === '1' ? { RE1_DEBUGLOG: '1' } : {},
+    print: function (t) { console.log(t); },
+    printErr: function (t) { console.warn(t); },
+    setStatus: function (t) {
+      if (!t) return;
+      var m = t.match(/\((\d+(\.\d+)?)\/(\d+)\)/);
+      statusEl.textContent = m ? 'Téléchargement du moteur… ' +
+        Math.round(100 * m[1] / m[3]) + ' %' : t;
+    },
+    re1OnFetch: function (pending) {
+      clearTimeout(busyTimer);
+      if (pending > 0) busyTimer = setTimeout(function () { busy.classList.add('on'); }, 250);
+      else busy.classList.remove('on');
+    },
+    re1OnFatal: function (message) {
+      fail('Données du jeu introuvables.\n\n' + message +
+           '\n\nLe dossier data/ doit contenir USA/ (et DC/, HD/) ainsi que manifest.json, ' +
+           'généré par tools/web/build_manifest.py.');
+    },
+    onAbort: function (what) { fail('Le jeu s\'est arrêté : ' + what); },
+    onGameQuit: function () {
+      overlay.hidden = false;
+      play.hidden = false;
+      play.disabled = false;
+      statusEl.textContent = 'Partie quittée.';
+      play.textContent = 'Relancer';
+      play.onclick = function () { location.reload(); };
+    },
+    // Audio and fullscreen need a user gesture: main() waits for the click
+    // (runtime.js holds a run dependency until `start` is called).
+    re1Gate: function (start) {
+      statusEl.textContent = 'Prêt.';
+      play.disabled = false;
+      play.onclick = function () {
+        play.disabled = true;
+        overlay.hidden = true;
+        canvas.focus();
+        start();
+      };
+    },
+  };
+
+  document.getElementById('fs').onclick = function () {
+    if (document.fullscreenElement) { document.exitFullscreen(); return; }
+    document.documentElement.requestFullscreen().then(function () {
+      // Keep Esc and Ctrl for the game while fullscreen (Chromium only).
+      if (navigator.keyboard && navigator.keyboard.lock) navigator.keyboard.lock().catch(function () {});
+    }).catch(function () {});
+    canvas.focus();
+  };
+  window.addEventListener('error', function (e) { if (overlay.hidden) fail(String(e.message)); });
+})();
+</script>
+{{{ SCRIPT }}}
+</body>
+</html>

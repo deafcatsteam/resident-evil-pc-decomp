@@ -194,10 +194,36 @@ const int kWorkers = 3;
 
 void StartWorkers(Shared& sh)
 {
+#ifdef __EMSCRIPTEN__
+    // The web build has no threads (no SharedArrayBuffer, so no COOP/COEP
+    // headers to ask of the server): a queued job stays queued until
+    // HdTextures_Poll decodes it on the game thread (RunQueued).
+    (void)sh;
+#else
     if (sh.started) return;
     sh.started = true;
     for (int i = 0; i < kWorkers; ++i) std::thread(WorkerMain).detach();
+#endif
 }
+
+#ifdef __EMSCRIPTEN__
+// Web: decode the queued job `name` now, on the game thread. The lock is held
+// throughout, which costs nothing single-threaded. Returns whether it was queued.
+bool RunQueued(Shared& sh, const std::string& name)
+{
+    for (std::deque<Job>::iterator it = sh.queue.begin(); it != sh.queue.end(); ++it) {
+        if (it->name != name) continue;
+        const Job job = *it;
+        sh.queue.erase(it);
+        std::shared_ptr<std::vector<unsigned char> > pixels(new std::vector<unsigned char>());
+        int w = 0, h = 0;
+        if (DecodeFile(job.path.c_str(), pixels.get(), &w, &h)) CacheInsert(sh, job.name, pixels, w, h);
+        else sh.failed.insert(job.name);
+        return true;
+    }
+    return false;
+}
+#endif
 
 // "<16 hex digits>.webp", any case -> the lower-cased name. False otherwise.
 bool ReplacementName(const char* file, std::string* name)
@@ -989,6 +1015,12 @@ int HdTextures_Poll(const std::string& token, HdPixels* out, int* outWidth, int*
     if (CacheGet(sh, token, out, outWidth, outHeight)) return 1;
     if (sh.failed.count(token)) return -1;
     if (sh.running.count(token)) return 0;
+#ifdef __EMSCRIPTEN__
+    if (RunQueued(sh, token)) {
+        if (CacheGet(sh, token, out, outWidth, outHeight)) return 1;
+        return sh.failed.count(token) ? -1 : 0;
+    }
+#endif
     for (std::deque<Job>::iterator it = sh.queue.begin(); it != sh.queue.end(); ++it) {
         if (it->name == token) return 0;
     }
