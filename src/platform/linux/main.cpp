@@ -21,6 +21,21 @@
 #include "marni/MarniGLFuncs.h"
 #include "marni/MarniSystem.h"
 
+#ifdef __EMSCRIPTEN__
+#include <emscripten.h>
+
+// The web build (docs/WEB_PORT.md) shares this entry point. The browser owns
+// the event loop, so wherever the native loop sleeps the web loop hands control
+// back until the next display refresh (Asyncify unwinds and rewinds main);
+// the 33 ms limiter below still decides which refreshes run a tick.
+EM_ASYNC_JS(void, web_wait_frame, (), {
+    await new Promise(resolve => requestAnimationFrame(resolve));
+});
+#define RE1_IDLE() web_wait_frame()
+#else
+#define RE1_IDLE() SDL_Delay(1)
+#endif
+
 // 0x00441f26: the original's frame interval, 0x21 == 33 ms == 30 ticks/s. The
 // play clock and every scripted wait are built on it.
 static const int kFrameIntervalMs = 33;
@@ -124,9 +139,16 @@ int main(int argc, char** argv)
         return 1;
     }
 
+#ifdef __EMSCRIPTEN__
+    // WebGL2 == OpenGL ES 3.0.
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 0);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_ES);
+#else
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 3);
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
+#endif
     SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
     SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 24);
 
@@ -273,7 +295,7 @@ int main(int argc, char** argv)
             SDL_GL_SetSwapInterval(g_bVSync ? 1 : 0);
         }
 
-        if (!g_bWindowFocused) { SDL_Delay(1); continue; }
+        if (!g_bWindowFocused) { RE1_IDLE(); continue; }
 
         DWORD now = plat_time_ms();
 
@@ -294,7 +316,7 @@ int main(int argc, char** argv)
                 }
             }
             if (bSkipFrame) {
-                SDL_Delay(1);
+                RE1_IDLE();
                 continue;
             }
         }
@@ -331,6 +353,10 @@ int main(int argc, char** argv)
         if (g_bMCINotifyEnabled) {
             if (g_bMCINotifyFlag) {
                 UpdateVideoPlayback();
+#ifdef __EMSCRIPTEN__
+                // The native loop spins here; the browser needs its turn.
+                RE1_IDLE();
+#endif
                 continue;
             }
             g_bMCINotifyFlag = TRUE;
@@ -363,6 +389,16 @@ int main(int argc, char** argv)
     SDL_DestroyWindow(window);
     SDL_Quit();
 
+#ifdef __EMSCRIPTEN__
+    // A page has no process to re-execute: restarting is reloading it, and
+    // quitting leaves the page on the shell's "game closed" screen.
+    if (s_restartRequested) {
+        EM_ASM({ location.reload(); });
+    } else {
+        EM_ASM({ if (Module.onGameQuit) Module.onGameQuit(); });
+    }
+    return 0;
+#else
     if (s_restartRequested) {
         // The lock is an flock on an open descriptor, which exec would carry
         // into the new image - and the new image would then fail to take it.
@@ -372,4 +408,5 @@ int main(int argc, char** argv)
         return 1;
     }
     return 0;
+#endif
 }

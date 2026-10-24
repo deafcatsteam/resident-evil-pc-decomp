@@ -175,6 +175,15 @@ BOOL plat_exe_dir(char* out, size_t size)
     if (out == NULL || size == 0) return FALSE;
     out[0] = '\0';
 
+#ifdef __EMSCRIPTEN__
+    // The web build's game root is a fixed directory of the virtual file
+    // system (src/platform/web): the data tree and the save folder are mounted
+    // under it, so config.ini's relative paths resolve exactly as natively.
+    static const char kWebRoot[] = "/re1";
+    if (sizeof(kWebRoot) > size) return FALSE;
+    strcpy(out, kWebRoot);
+    return TRUE;
+#else
     char exe[PATH_MAX];
     ssize_t n = readlink("/proc/self/exe", exe, sizeof(exe) - 1);
     if (n <= 0) return FALSE;
@@ -187,6 +196,7 @@ BOOL plat_exe_dir(char* out, size_t size)
     if (strlen(exe) >= size) return FALSE;
     strcpy(out, exe);
     return TRUE;
+#endif
 }
 
 BOOL plat_path_is_absolute(const char* path)
@@ -360,6 +370,15 @@ void plat_audio_restore_volume(void) {}
 
 void* plat_alloc_guarded_stacks(int count, size_t stackSize, size_t guardSize)
 {
+#ifdef __EMSCRIPTEN__
+    // WebAssembly linear memory has no page protection, so the guards cannot
+    // fault; the slots keep the same layout so TaskStackBase() is unchanged.
+    size_t total = (size_t)count * (stackSize + guardSize) + guardSize;
+    unsigned char* mem = (unsigned char*)aligned_alloc(16, total);
+    if (mem == NULL) return NULL;
+    memset(mem, 0, total);
+    return mem + guardSize;   // skip G0 -> start of S0
+#else
     size_t total = (size_t)count * (stackSize + guardSize) + guardSize;
     void* mem = mmap(NULL, total, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
     if (mem == MAP_FAILED) return NULL;
@@ -375,6 +394,7 @@ void* plat_alloc_guarded_stacks(int count, size_t stackSize, size_t guardSize)
         }
     }
     return (unsigned char*)mem + guardSize;   // skip G0 -> start of S0
+#endif
 }
 
 void plat_fatal(const char* message)

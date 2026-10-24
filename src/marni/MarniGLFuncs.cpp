@@ -3,6 +3,17 @@
 
 #include <stdio.h>
 
+#ifdef __EMSCRIPTEN__
+
+bool MarniGL_LoadFunctions(void* (*getProc)(const char*))
+{
+    // Linked directly against Emscripten's GL library (see MarniGLFuncs.h).
+    (void)getProc;
+    return true;
+}
+
+#else
+
 #define RE1_GL_DEF(type, name) type name = nullptr;
 RE1_GL_FUNCS(RE1_GL_DEF)
 #undef RE1_GL_DEF
@@ -23,3 +34,5 @@ bool MarniGL_LoadFunctions(void* (*getProc)(const char*))
 
     return missing == 0;
 }
+
+#endif  // __EMSCRIPTEN__

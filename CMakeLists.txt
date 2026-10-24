@@ -1,4 +1,5 @@
-# CMakeLists.txt - Linux build (docs/LINUX_PORT.md).
+# CMakeLists.txt - Linux build (docs/LINUX_PORT.md), plus the web build
+# (Emscripten, see the EMSCRIPTEN branch below).
 #
 # Windows still builds through Game.vcxproj / build.bat; this file is the
 # source-of-truth list for the Linux target. The two lists must be kept in
@@ -137,6 +138,59 @@ set(RE1_SOURCES
     src/game/entities/Yawn.cpp
     src/game/entities/Zombie.cpp
 )
+
+# ---------------------------------------------------------------------------
+# Web build (docs/WEB_PORT.md): Emscripten, WebAssembly + WebGL2.
+#
+#   emcmake cmake -S . -B build/web -DCMAKE_BUILD_TYPE=Release
+#   cmake --build build/web -j
+#
+# Reuses the Linux platform layer (SDL2 through Emscripten's port) and swaps
+# the parts a browser does differently - the FMV decoder, crash reporting and
+# the file system - for src/platform/web. wasm32 keeps the game's 32-bit
+# pointer and integer assumptions, so no -m32 equivalent is needed.
+# ---------------------------------------------------------------------------
+if(EMSCRIPTEN)
+    list(APPEND RE1_SOURCES
+        src/platform/linux/platform.cpp
+        src/platform/linux/input.cpp
+        src/platform/linux/audio.cpp
+        src/platform/linux/config.cpp
+        src/platform/linux/stubs.cpp
+        src/platform/linux/main.cpp
+        src/platform/web/crash.cpp
+        src/platform/web/video.cpp
+        src/platform/web/vfs.cpp
+        src/marni/MarniDX_GL.cpp
+        src/marni/MarniGLFuncs.cpp
+    )
+
+    add_executable(residentevil ${RE1_SOURCES})
+    target_include_directories(residentevil PRIVATE src)
+    set_target_properties(residentevil PROPERTIES SUFFIX ".html")
+
+    # Same reasons as the native flags below: the decomp reads raw buffers
+    # through struct casts and relies on wrap-around signed math.
+    target_compile_options(residentevil PRIVATE -w -sUSE_SDL=2
+        -fno-strict-aliasing -fno-strict-overflow)
+    # ASYNCIFY: the task scheduler's fibers (TaskScheduler.cpp) and the main
+    # loop's wait for the next frame both unwind the wasm stack.
+    # EMULATE_FUNCTION_POINTER_CASTS: the decomp calls raw vtable slots and
+    # callbacks through the prototype the call site needs (e.g. a void(*)
+    # over CMarniDirect3D's int-returning DeleteTextureHandle). x86 tolerates
+    # that; wasm's call_indirect traps on any signature mismatch.
+    # MAXIMUM_MEMORY: wasm32 addresses 4 GB, the same ceiling as the 32-bit
+    # process; the data tree and the HD textures are what fill it.
+    target_link_options(residentevil PRIVATE
+        -sUSE_SDL=2
+        -sMIN_WEBGL_VERSION=2 -sMAX_WEBGL_VERSION=2
+        -sASYNCIFY -sASYNCIFY_STACK_SIZE=1048576
+        -sEMULATE_FUNCTION_POINTER_CASTS
+        -sALLOW_MEMORY_GROWTH -sINITIAL_MEMORY=128MB -sMAXIMUM_MEMORY=4GB
+        -sSTACK_SIZE=1MB
+        -sFORCE_FILESYSTEM)
+    return()
+endif()
 
 # ---------------------------------------------------------------------------
 # Linux platform layer + renderer backend.

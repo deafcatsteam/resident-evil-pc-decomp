@@ -24,12 +24,14 @@
 //   Task_exit (FUN_00420210) at 0x00420210
 //   Task_chain at 0x00420230
 //
-// Two switch implementations, selected by compiler:
+// Three switch implementations, selected by compiler:
 //   - MSVC x86: the original's naked-asm ESP switching (below).
+//   - Emscripten (the web build): emscripten_fiber_swap over Asyncify, the
+//     same contract on WebAssembly, which has no switchable machine stack.
 //   - Everything else (Linux, and later ARM): ucontext makecontext/swapcontext,
 //     which expresses the same "run until yield, resume where you left off"
 //     contract without hand-written assembly. See docs/LINUX_PORT.md Phase 1.
-// Both share the public API and the scheduling loop.
+// All share the public API and the scheduling loop.
 //
 // IMPORTANT (MSVC path): /RTCs (Runtime Stack Check) MUST be disabled in this
 // file. The manual ESP switching (g_SchedulerESP save/restore via naked asm and
@@ -186,7 +188,75 @@ static void TaskSwitch_Resume(void)
     ReturnToScheduler_Resume();
 }
 
-#else  // !(MSVC x86)
+#elif defined(__EMSCRIPTEN__)
+
+// ============================================================================
+// WebAssembly switch primitives (Emscripten fibers).
+//
+// Wasm has no addressable machine stack, so neither the ESP switch nor
+// ucontext is available. An Emscripten fiber pairs a C stack (the task's own
+// guarded slot, as above) with an Asyncify buffer that holds the unwound wasm
+// call frames while the fiber is switched out. The contract is the ucontext
+// one: run until a yield point, resume exactly where the task left off.
+//
+// The scheduler side is a fiber made from the current context; it is created
+// lazily on the first switch, which happens inside main_loop on the main
+// thread (requires -sASYNCIFY at link time).
+// ============================================================================
+#include <emscripten/fiber.h>
+
+// Room for the saved wasm frames of a switched-out task. The deepest yield is
+// reached through the room loaders and the event VM; 256 KB is the size of the
+// task's C stack and leaves a wide margin.
+#define TASK_ASYNCIFY_SIZE 262144
+
+static emscripten_fiber_t s_SchedFiber;
+static emscripten_fiber_t s_TaskFiber[TASK_MAX];
+static BYTE s_SchedAsyncify[TASK_ASYNCIFY_SIZE];
+static BYTE s_TaskAsyncify[TASK_MAX][TASK_ASYNCIFY_SIZE];
+static BOOL s_SchedFiberReady = FALSE;
+
+void Task_exit(void);   // forward: a task function that returns has ended
+
+// Task entry trampoline. Runs on the task's own stack.
+static void TaskEntry(void* arg)
+{
+    (void)arg;
+    void (*fn)(void) = (void (*)(void))g_TasksEIP[g_CurrentTaskID];
+    fn();
+    // The original tasks never return (they end with Task_exit/Task_chain),
+    // and a fiber entry must not return either.
+    Task_exit();
+}
+
+static void TaskSwitch_Start(void)
+{
+    int id = g_CurrentTaskID;
+
+    if (!s_SchedFiberReady) {
+        emscripten_fiber_init_from_current_context(&s_SchedFiber, s_SchedAsyncify,
+                                                   sizeof(s_SchedAsyncify));
+        s_SchedFiberReady = TRUE;
+    }
+    // A restarted slot (Task_chain, or Task_execute over a live task) simply
+    // gets a fresh fiber on the same stacks; its old frames are discarded.
+    emscripten_fiber_init(&s_TaskFiber[id], TaskEntry, NULL,
+                          TaskStackBase(id), TASK_STACK_SIZE,
+                          s_TaskAsyncify[id], sizeof(s_TaskAsyncify[id]));
+    emscripten_fiber_swap(&s_SchedFiber, &s_TaskFiber[id]);
+}
+
+static void TaskSwitch_Resume(void)
+{
+    emscripten_fiber_swap(&s_SchedFiber, &s_TaskFiber[g_CurrentTaskID]);
+}
+
+static void TaskYield(void)
+{
+    emscripten_fiber_swap(&s_TaskFiber[g_CurrentTaskID], &s_SchedFiber);
+}
+
+#else  // !(MSVC x86) && !__EMSCRIPTEN__
 
 // ============================================================================
 // Portable switch primitives (ucontext).
@@ -239,7 +309,7 @@ static void TaskYield(void)
     swapcontext(&s_TaskContext[g_CurrentTaskID], &s_SchedContext);
 }
 
-#endif  // _MSC_VER && _M_IX86
+#endif  // _MSC_VER && _M_IX86 / __EMSCRIPTEN__
 
 // ============================================================================
 // TaskScheduler_Update (0x004200E0)

@@ -9,7 +9,14 @@
 // backend body can be repointed at GLES for Android/Switch later.
 #pragma once
 
+#ifdef __EMSCRIPTEN__
+// WebGL2 is GLES 3.0: the entry points below are ordinary exports of
+// Emscripten's GL library, so the names resolve at link time and no loader
+// pointers are declared (they would collide with the real functions).
+#include <GLES3/gl3.h>
+#else
 #include <GL/glcorearb.h>
+#endif
 
 // X(pointer type, gl name)
 #define RE1_GL_FUNCS(X)                                                        \
@@ -65,10 +72,13 @@
     X(PFNGLDRAWARRAYSPROC,             glDrawArrays)                           \
     X(PFNGLREADPIXELSPROC,             glReadPixels)
 
+#ifndef __EMSCRIPTEN__
 #define RE1_GL_DECL(type, name) extern type name;
 RE1_GL_FUNCS(RE1_GL_DECL)
 #undef RE1_GL_DECL
+#endif
 
 // Resolve every entry point. `getProc` is SDL_GL_GetProcAddress. Returns true
-// only if all of them resolved; missing names are logged to stderr.
+// only if all of them resolved; missing names are logged to stderr. On
+// Emscripten there is nothing to resolve and it always succeeds.
 bool MarniGL_LoadFunctions(void* (*getProc)(const char*));

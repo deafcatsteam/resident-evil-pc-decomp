@@ -98,8 +98,17 @@ MarniDX* Marni_DX() { return g_pDX; }
 // Shader / pipeline setup
 // ---------------------------------------------------------------------------
 
+// WebGL2 takes GLSL ES 3.00; the bodies are the same.
+#ifdef __EMSCRIPTEN__
+#define RE1_GLSL_VERTEX_HEADER   "#version 300 es\n"
+#define RE1_GLSL_FRAGMENT_HEADER "#version 300 es\nprecision highp float;\n"
+#else
+#define RE1_GLSL_VERTEX_HEADER   "#version 330 core\n"
+#define RE1_GLSL_FRAGMENT_HEADER "#version 330 core\n"
+#endif
+
 static const char* kVertexSrc =
-    "#version 330 core\n"
+    RE1_GLSL_VERTEX_HEADER
     "layout(location = 0) in vec2 aPos;\n"
     "layout(location = 1) in vec2 aUV;\n"
     "layout(location = 2) in vec4 aCol;\n"
@@ -126,7 +135,7 @@ static const char* kVertexSrc =
     "}\n";
 
 static const char* kFragmentSrc =
-    "#version 330 core\n"
+    RE1_GLSL_FRAGMENT_HEADER
     "in vec2 vUV;\n"
     "in vec4 vCol;\n"
     "uniform sampler2D uTex;\n"
